@@ -26,6 +26,25 @@ const TRANSLATIONS = {
     baseColors: "BASE COLORS",
     secondaryDivider: "SECONDARY  (mixed)",
     hint: "Tap swatch or ＋ to add · — to remove · Secondaries blend from primaries via subtractive mixing",
+    saveFormula: "💾 Save Formula",
+    savedFormulas: "📋 Saved Formulas",
+    history: "🕐 History",
+    export: "⬆ Export",
+    noHistory: "No history yet",
+    noSaved: "No saved formulas",
+    nameLabel: "Name this color",
+    namePlaceholder: "e.g. Sunset Orange",
+    saveBtn: "Save",
+    cancelBtn: "Cancel",
+    deleteBtn: "Delete",
+    loadBtn: "Load",
+    copyHex: "HEX",
+    copyRgb: "RGB",
+    copyCmyk: "CMYK",
+    copied: "Copied!",
+    exportTitle: "Export Color",
+    historyClear: "Clear",
+    formulaSaved: "Formula saved!",
   },
   zh: {
     subtitle: "PIGMENT STUDIO",
@@ -51,6 +70,25 @@ const TRANSLATIONS = {
     baseColors: "基 色",
     secondaryDivider: "间 色（混合生色）",
     hint: "点击色块或 ＋ 叠加 · — 减色 · 间色由基色混合而来",
+    saveFormula: "💾 保存配方",
+    savedFormulas: "📋 我的配方",
+    history: "🕐 历史记录",
+    export: "⬆ 导出",
+    noHistory: "暂无历史记录",
+    noSaved: "暂无保存的配方",
+    nameLabel: "为这个颜色命名",
+    namePlaceholder: "例如：落日橙",
+    saveBtn: "保存",
+    cancelBtn: "取消",
+    deleteBtn: "删除",
+    loadBtn: "载入",
+    copyHex: "HEX",
+    copyRgb: "RGB",
+    copyCmyk: "CMYK",
+    copied: "已复制！",
+    exportTitle: "导出颜色",
+    historyClear: "清空",
+    formulaSaved: "配方已保存！",
   },
 };
 
@@ -260,6 +298,24 @@ function colorSimilarity(rgb1,rgb2) {
   const d = Math.sqrt((rgb1[0]-rgb2[0])**2+(rgb1[1]-rgb2[1])**2+(rgb1[2]-rgb2[2])**2);
   return Math.max(0,Math.round((1-d/Math.sqrt(3*255*255))*100));
 }
+
+function rgbToCmyk(r,g,b) {
+  r /= 255; g /= 255; b /= 255;
+  const k = 1 - Math.max(r,g,b);
+  if (k === 1) return { c:0, m:0, y:0, k:100 };
+  const c = Math.round(((1-r-k)/(1-k))*100);
+  const m = Math.round(((1-g-k)/(1-k))*100);
+  const y = Math.round(((1-b-k)/(1-k))*100);
+  return { c, m, y, k: Math.round(k*100) };
+}
+
+function loadFromStorage(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function saveToStorage(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+
 const initCounts = () => Object.fromEntries(ALL_COLORS.map(c=>[c.id,0]));
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -280,6 +336,16 @@ export default function App() {
   const [selectedColor, setSelectedColor] = useState(null);
   const [crosshair, setCrosshair] = useState({ x: 0, y: 0 });
 
+  // ── New feature state ────────────────────────────────────────────────────────
+  const [savedFormulas, setSavedFormulas] = useState(() => loadFromStorage("cw_formulas", []));
+  const [history, setHistory] = useState(() => loadFromStorage("cw_history", []));
+  const [showSaved, setShowSaved] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
+  const [colorName, setColorName] = useState("");
+  const [copiedKey, setCopiedKey] = useState(null);
+
   const fileRef = useRef();
   const canvasRef = useRef();
   const imgRef = useRef();
@@ -294,6 +360,54 @@ export default function App() {
   const add = (id) => { setCounts(p=>({...p,[id]:p[id]+1})); setFlash(id); setTimeout(()=>setFlash(null),300); };
   const sub = (id) => setCounts(p=>({...p,[id]:Math.max(0,p[id]-1)}));
   const reset = () => setCounts(initCounts());
+
+  // ── History: push to history when mix changes and total > 0 ─────────────────
+  const prevMixedHexRef = useRef(null);
+  useEffect(() => {
+    if (total === 0) return;
+    if (mixedHex === prevMixedHexRef.current) return;
+    prevMixedHexRef.current = mixedHex;
+    const entry = { hex: mixedHex, counts: {...counts}, ts: Date.now() };
+    setHistory(prev => {
+      const next = [entry, ...prev.filter(h => h.hex !== mixedHex)].slice(0, 30);
+      saveToStorage("cw_history", next);
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mixedHex, total]);
+
+  // ── Save formula ─────────────────────────────────────────────────────────────
+  const handleSaveFormula = () => {
+    if (total === 0) return;
+    setColorName("");
+    setShowNameModal(true);
+  };
+  const confirmSave = () => {
+    const name = colorName.trim() || mixedHex.toUpperCase();
+    const entry = { id: Date.now(), name, hex: mixedHex, counts: {...counts} };
+    setSavedFormulas(prev => {
+      const next = [entry, ...prev].slice(0, 50);
+      saveToStorage("cw_formulas", next);
+      return next;
+    });
+    setShowNameModal(false);
+  };
+  const deleteFormula = (id) => {
+    setSavedFormulas(prev => { const n = prev.filter(f=>f.id!==id); saveToStorage("cw_formulas",n); return n; });
+  };
+  const loadFormula = (f) => { setCounts(f.counts); setShowSaved(false); };
+
+  // ── Export / copy ────────────────────────────────────────────────────────────
+  const copyText = (text, key) => {
+    navigator.clipboard.writeText(text).catch(()=>{});
+    setCopiedKey(key);
+    setTimeout(()=>setCopiedKey(null), 1500);
+  };
+  const exportValues = () => {
+    const [r,g,b] = hexToRgb(mixedHex);
+    const {c,m,y,k} = rgbToCmyk(r,g,b);
+    return { hex: mixedHex.toUpperCase(), rgb: `rgb(${r}, ${g}, ${b})`, cmyk: `cmyk(${c}%, ${m}%, ${y}%, ${k}%)` };
+  };
 
   const handleImageUpload = useCallback((e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -546,8 +660,112 @@ export default function App() {
             {total>0&&<div style={{position:"absolute",bottom:8,left:10,fontSize:10,background:"rgba(0,0,0,0.5)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{mixedHex.toUpperCase()}</div>}
           </div>
           <button onClick={reset} style={{fontSize:10,padding:"6px 0",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6,color:"#c9b99a",cursor:"pointer"}}>{t.reset}</button>
+          <div style={{display:"flex",gap:5}}>
+            <button onClick={handleSaveFormula} disabled={total===0} style={{flex:1,fontSize:10,padding:"6px 0",background:total>0?"rgba(201,185,154,0.12)":"rgba(255,255,255,0.03)",border:`1px solid ${total>0?"rgba(201,185,154,0.3)":"rgba(255,255,255,0.07)"}`,borderRadius:6,color:total>0?"#c9b99a":"#444",cursor:total>0?"pointer":"not-allowed"}}>{t.saveFormula}</button>
+            <button onClick={()=>{if(total>0){setShowExport(true);setShowSaved(false);setShowHistory(false);}}} disabled={total===0} style={{flex:1,fontSize:10,padding:"6px 0",background:total>0?"rgba(100,180,255,0.1)":"rgba(255,255,255,0.03)",border:`1px solid ${total>0?"rgba(100,180,255,0.25)":"rgba(255,255,255,0.07)"}`,borderRadius:6,color:total>0?"#7ec8e3":"#444",cursor:total>0?"pointer":"not-allowed"}}>{t.export}</button>
+          </div>
         </div>
       </div>
+
+      {/* ── Action bar: saved / history ── */}
+      <div style={{width:"100%",maxWidth:500,display:"flex",gap:8,marginBottom:12}}>
+        <button onClick={()=>{setShowSaved(v=>!v);setShowHistory(false);setShowExport(false);}} style={{flex:1,fontSize:10,padding:"7px 0",background:showSaved?"rgba(201,185,154,0.12)":"rgba(255,255,255,0.04)",border:`1px solid ${showSaved?"rgba(201,185,154,0.3)":"rgba(255,255,255,0.08)"}`,borderRadius:8,color:"#c9b99a",cursor:"pointer",letterSpacing:"0.05em"}}>{t.savedFormulas} {savedFormulas.length>0&&`(${savedFormulas.length})`}</button>
+        <button onClick={()=>{setShowHistory(v=>!v);setShowSaved(false);setShowExport(false);}} style={{flex:1,fontSize:10,padding:"7px 0",background:showHistory?"rgba(201,185,154,0.12)":"rgba(255,255,255,0.04)",border:`1px solid ${showHistory?"rgba(201,185,154,0.3)":"rgba(255,255,255,0.08)"}`,borderRadius:8,color:"#c9b99a",cursor:"pointer",letterSpacing:"0.05em"}}>{t.history} {history.length>0&&`(${history.length})`}</button>
+      </div>
+
+      {/* ── Export panel ── */}
+      {showExport && total>0 && (()=>{
+        const ev = exportValues();
+        return (
+          <div style={{width:"100%",maxWidth:500,background:"rgba(14,14,20,0.98)",border:"1px solid rgba(100,180,255,0.2)",borderRadius:14,marginBottom:16,padding:14}}>
+            <div style={{fontSize:11,letterSpacing:"0.2em",color:"#7ec8e3",marginBottom:12}}>{t.exportTitle}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8}}>
+              <div style={{width:36,height:36,borderRadius:8,background:mixedHex,border:"1px solid rgba(255,255,255,0.1)",flexShrink:0}}/>
+              <div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}>
+                {[["hex",ev.hex],["rgb",ev.rgb],["cmyk",ev.cmyk]].map(([key,val])=>(
+                  <div key={key} style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{fontSize:9,color:"#6b6860",width:32,letterSpacing:"0.1em"}}>{key.toUpperCase()}</div>
+                    <div style={{flex:1,fontSize:10,fontFamily:"monospace",color:"#d4c9b0",background:"rgba(255,255,255,0.04)",borderRadius:5,padding:"3px 8px"}}>{val}</div>
+                    <button onClick={()=>copyText(val,key)} style={{fontSize:9,padding:"3px 8px",background:copiedKey===key?"rgba(74,222,128,0.15)":"rgba(255,255,255,0.07)",border:`1px solid ${copiedKey===key?"rgba(74,222,128,0.4)":"rgba(255,255,255,0.1)"}`,borderRadius:5,color:copiedKey===key?"#4ade80":"#a09880",cursor:"pointer",whiteSpace:"nowrap"}}>{copiedKey===key?t.copied:"Copy"}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Saved formulas panel ── */}
+      {showSaved && (
+        <div style={{width:"100%",maxWidth:500,background:"rgba(14,14,20,0.98)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:14,marginBottom:16,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.07)",fontSize:11,letterSpacing:"0.15em",color:"#c9b99a"}}>{t.savedFormulas}</div>
+          {savedFormulas.length===0
+            ? <div style={{padding:16,fontSize:11,color:"#4a4840",textAlign:"center"}}>{t.noSaved}</div>
+            : <div style={{maxHeight:220,overflowY:"auto"}}>
+                {savedFormulas.map(f=>(
+                  <div key={f.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <div style={{width:28,height:28,borderRadius:6,background:f.hex,border:"1px solid rgba(255,255,255,0.1)",flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11,color:"#e0dbd0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                      <div style={{fontSize:9,fontFamily:"monospace",color:"#5a5850",marginTop:1}}>{f.hex.toUpperCase()}</div>
+                    </div>
+                    <button onClick={()=>loadFormula(f)} style={{fontSize:9,padding:"4px 8px",background:"rgba(201,185,154,0.1)",border:"1px solid rgba(201,185,154,0.25)",borderRadius:5,color:"#c9b99a",cursor:"pointer"}}>{t.loadBtn}</button>
+                    <button onClick={()=>deleteFormula(f.id)} style={{fontSize:9,padding:"4px 8px",background:"rgba(255,100,100,0.08)",border:"1px solid rgba(255,100,100,0.2)",borderRadius:5,color:"#f87171",cursor:"pointer"}}>{t.deleteBtn}</button>
+                  </div>
+                ))}
+              </div>
+          }
+        </div>
+      )}
+
+      {/* ── History panel ── */}
+      {showHistory && (
+        <div style={{width:"100%",maxWidth:500,background:"rgba(14,14,20,0.98)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:14,marginBottom:16,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:11,letterSpacing:"0.15em",color:"#c9b99a"}}>{t.history}</span>
+            {history.length>0&&<button onClick={()=>{setHistory([]);saveToStorage("cw_history",[]);}} style={{fontSize:9,padding:"3px 8px",background:"rgba(255,100,100,0.08)",border:"1px solid rgba(255,100,100,0.2)",borderRadius:5,color:"#f87171",cursor:"pointer"}}>{t.historyClear}</button>}
+          </div>
+          {history.length===0
+            ? <div style={{padding:16,fontSize:11,color:"#4a4840",textAlign:"center"}}>{t.noHistory}</div>
+            : <div style={{display:"flex",flexWrap:"wrap",gap:8,padding:12}}>
+                {history.map((h,i)=>(
+                  <div key={i} title={h.hex} onClick={()=>{ setCounts(h.counts); setShowHistory(false); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer"}}>
+                    <div style={{width:36,height:36,borderRadius:8,background:h.hex,border:"2px solid rgba(255,255,255,0.08)",boxShadow:`0 2px 8px ${h.hex}60`,transition:"transform 0.12s"}}
+                      onMouseEnter={e=>e.currentTarget.style.transform="scale(1.1)"}
+                      onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}
+                    />
+                    <div style={{fontSize:8,fontFamily:"monospace",color:"#4a4840"}}>{h.hex.toUpperCase()}</div>
+                  </div>
+                ))}
+              </div>
+          }
+        </div>
+      )}
+
+      {/* ── Name modal ── */}
+      {showNameModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{background:"#18181e",borderRadius:16,padding:20,width:"100%",maxWidth:340,border:"1px solid rgba(255,255,255,0.12)"}}>
+            <div style={{fontSize:12,letterSpacing:"0.15em",color:"#c9b99a",marginBottom:4}}>{t.nameLabel}</div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+              <div style={{width:32,height:32,borderRadius:7,background:mixedHex,border:"1px solid rgba(255,255,255,0.1)",flexShrink:0}}/>
+              <div style={{fontSize:10,fontFamily:"monospace",color:"#6b6860"}}>{mixedHex.toUpperCase()}</div>
+            </div>
+            <input
+              value={colorName}
+              onChange={e=>setColorName(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&confirmSave()}
+              placeholder={t.namePlaceholder}
+              autoFocus
+              style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"#f0ece3",fontSize:16,padding:"9px 12px",outline:"none",marginBottom:14}}
+            />
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setShowNameModal(false)} style={{flex:1,padding:"10px 0",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,color:"#a09880",fontSize:12,cursor:"pointer"}}>{t.cancelBtn}</button>
+              <button onClick={confirmSave} style={{flex:2,padding:"10px 0",background:`linear-gradient(135deg,${mixedHex}cc,${mixedHex}88)`,border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em"}}>{t.saveBtn}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Swatch panel ── */}
       {showSwatches && (

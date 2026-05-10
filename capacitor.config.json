@@ -1,0 +1,6 @@
+{
+  "appId": "com.dakcl.colormixer",
+  "appName": "Color Mixer",
+  "webDir": "build",
+  "bundledWebRuntime": false
+}
