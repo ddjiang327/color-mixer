@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 const TRANSLATIONS = {
   en: {
     subtitle: "PIGMENT STUDIO",
-    title: "Color Workshop",
+    title: "Color Trainer",
     eyedropperTitle: "🔬 Eyedropper",
     eyedropperHint: "Hover to preview · Double-click to lock color",
     hover: "Hover",
