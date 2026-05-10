@@ -249,28 +249,43 @@ function rybHsvToRgb(h, s, v) {
   return [mix(r), mix(g), mix(b)];
 }
 
+// Tinting strength: black > blue > red > yellow > white
+// Reflects real pigment behaviour — a small amount of black or blue
+// dominates, while white needs much more to lighten a mix.
+const TINTING_STRENGTH = {
+  black:  5,
+  blue:   4,
+  red:    3,
+  orange: 2.25, // avg of red + yellow
+  purple: 3.5,  // avg of red + blue
+  green:  2.75, // avg of blue + yellow
+  yellow: 1.5,
+  white:  1,
+};
+
 function mixColors(counts) {
   const total = Object.values(counts).reduce((a,b)=>a+b,0);
   if (total===0) return [255,255,255];
 
-  // Separate chromatic colours from white/black (they affect sat/value, not hue)
+  // Effective weight = count × tinting strength
+  const effectiveTotal = ALL_COLORS.reduce((sum, { id }) =>
+    sum + (counts[id] || 0) * (TINTING_STRENGTH[id] || 1), 0);
+
   const chromatic = ALL_COLORS.filter(c => c.id !== 'white' && c.id !== 'black');
-  const whiteW  = (counts['white']  || 0) / total;
-  const blackW  = (counts['black']  || 0) / total;
-  const colorW  = 1 - whiteW - blackW;
+  const whiteW = ((counts['white'] || 0) * TINTING_STRENGTH.white) / effectiveTotal;
+  const blackW = ((counts['black'] || 0) * TINTING_STRENGTH.black) / effectiveTotal;
+  const colorW = 1 - whiteW - blackW;
 
   if (colorW <= 0) {
-    // Only white/black: interpolate grey
     const v = whiteW / (whiteW + blackW);
     const c = Math.round(v * 245 + (1-v) * 15);
     return [c, c, c];
   }
 
-  // Weighted average of RYB hue components using unit-circle averaging
-  // (prevents red+violet wrapping issues)
+  // Weighted average of RYB hue using unit-circle averaging
   let sinSum = 0, cosSum = 0, sSum = 0, vSum = 0, wTotal = 0;
   chromatic.forEach(({ id, rgb }) => {
-    const w = (counts[id] || 0) / total;
+    const w = ((counts[id] || 0) * (TINTING_STRENGTH[id] || 1)) / effectiveTotal;
     if (w === 0) return;
     const { h, s, v } = rgbToRybHsv(...rgb);
     const angle = h * 2 * Math.PI;
@@ -287,7 +302,6 @@ function mixColors(counts) {
 
   let [r, g, b] = rybHsvToRgb(avgH, avgS, avgV);
 
-  // Apply white (tints) and black (shades)
   r = r * colorW + 245 * whiteW + 15 * blackW;
   g = g * colorW + 245 * whiteW + 15 * blackW;
   b = b * colorW + 245 * whiteW + 15 * blackW;
