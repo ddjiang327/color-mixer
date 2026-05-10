@@ -320,7 +320,10 @@ const initCounts = () => Object.fromEntries(ALL_COLORS.map(c=>[c.id,0]));
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [lang, setLang] = useState("en");
+  const [lang, setLang] = useState(() => {
+    const locale = navigator.language || "en";
+    return locale.startsWith("zh") ? "zh" : "en";
+  });
   const t = TRANSLATIONS[lang];
   const L = (obj) => (typeof obj === "string" ? obj : obj[lang]);
 
